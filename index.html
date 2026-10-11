@@ -16,6 +16,8 @@ body{display:flex;align-items:center;justify-content:center}
 /* ===== Layout (6" screen ≈ Banner 1.25" | Holder 3" | Filters 0.75" | Cart bar 1") ===== */
 .banner{flex:0 0 20%;padding:var(--sp) 12px 0;min-height:0}
 .banner .bx{width:100%;height:100%;border-radius:16px;border:1px solid var(--line);background:var(--card);overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--or);font-weight:800;font-size:20px;text-align:center}
+.banner .bx.sk{background:linear-gradient(100deg,#141416 30%,#222226 50%,#141416 70%);background-size:200% 100%;animation:shm 1.2s linear infinite;color:transparent}
+@keyframes shm{to{background-position:-200% 0}}
 .banner img{width:100%;height:100%;object-fit:contain;display:block}
 .filters{flex:none;display:flex;flex-direction:column;gap:var(--sp);padding-top:var(--sp)}
 #slider{flex:1;min-height:0;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
@@ -103,6 +105,10 @@ body{display:flex;align-items:center;justify-content:center}
 .panel input{width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--line);background:#0e0e10;color:var(--tx);margin-bottom:10px;font-size:14px}
 .sheet.ctr{align-items:center;padding:14px}.sheet.ctr .panel{border-radius:22px;height:30%;min-height:230px;justify-content:center;padding:22px 20px}
 
+.pv{width:100%;display:block;border-radius:12px;border:1px solid var(--line)}
+.hint{flex:none;font-size:12px;color:var(--mut);text-align:center;margin:4px 0 10px;line-height:1.4}
+.hint b{color:var(--or)}
+.ok.sec{background:var(--btn);color:var(--tx);border:1.5px solid var(--line)}
 /* progress */
 .pg{padding:6px 4px;text-align:center}
 .pg .big{font-size:28px;font-weight:800;margin-bottom:22px}
@@ -145,7 +151,7 @@ body{display:flex;align-items:center;justify-content:center}
 <body>
 
 <div id="app">
-  <div class="banner"><div class="bx" id="bnr">Middle East Pizza &amp; Fast Food</div></div>
+  <div class="banner"><div class="bx sk" id="bnr">Middle East Pizza &amp; Fast Food</div></div>
 
   <div class="filters">
     <div class="row">
@@ -227,23 +233,27 @@ function nextImg(el){
   if(i < c.length){ el.dataset.i = i; el.src = c[i]; }
   else { el.onerror = null; el.style.display = "none"; }
 }
-function imgTag(dir, file, alt){
+function imgTag(dir, file, alt, eager){
   const c = candidates(dir, file);
-  return `<img src="${c[0]}" alt="${alt}" data-c='${JSON.stringify(c)}' data-i="0" onerror="nextImg(this)">`;
+  return `<img ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async" src="${c[0]}" alt="${alt}" data-c='${JSON.stringify(c)}' data-i="0" onerror="nextImg(this)">`;
 }
 function loadBanner(){
   const c = candidates(BANNER_DIR, BANNER_FILE), box = $("bnr");
   const im = new Image();
-  im.alt = "Middle East Banner";
+  im.alt = "Middle East Banner"; im.fetchPriority = "high"; im.decoding = "async";
   im.dataset.c = JSON.stringify(c); im.dataset.i = "0";
   im.onerror = () => nextImg(im);
-  im.onload = () => { box.innerHTML = ""; box.appendChild(im); };
+  im.onload = () => { box.classList.remove("sk"); box.innerHTML = ""; box.appendChild(im); };
   im.src = c[0];
   window.bannerEl = im;
+  setTimeout(() => { if(!im.complete || !im.naturalWidth) box.classList.remove("sk"); }, 6000);
 }
 
 /* ================= MENU UI ================= */
-function init(){ renderCategories(); renderMenu(); totals(); loadBanner(); }
+function init(){ loadBanner(); renderCategories(); renderMenu(); totals();
+  try{ fetch(APPS_SCRIPT_URL + "?action=ping").catch(()=>{}); }catch(e){}   // Apps Script ko pehle se jaga deta hai
+  setInterval(() => { if(!document.hidden) fetch(APPS_SCRIPT_URL + "?action=ping").catch(()=>{}); }, 240000);
+}
 
 function renderCategories(){
   $("chips").innerHTML = categories.map(c => `<div class="chip ${c===selectedCat?'on':''}" onclick="selectCategory('${c}')">${c}</div>`).join("");
@@ -271,7 +281,7 @@ function renderMenu(){
     const q = cart[it.id] || 0;
     return `<div class="slide"><div class="card">
       <div class="img">
-        ${imgTag(HOLDER_DIR, it.img, it.name)}
+        ${imgTag(HOLDER_DIR, it.img, it.name, idx<2)}
         <span class="tag">${it.tag}</span><span class="vb ${it.isVeg?'v':'n'}"></span>
         ${idx>0?`<button class="ar l" onclick="scrollSlider(-1)">‹</button>`:""}
         ${idx<f.length-1?`<button class="ar r" onclick="scrollSlider(1)">›</button>`:""}
@@ -308,7 +318,7 @@ function totals(){
 
 /* ================= CART / CHECKOUT ================= */
 let step="cart", mode=null, tbl=null, oth="", dname="", daddr="", dpin="", dcontact="";
-let ord="", snap=null, pic="", busy=false, waLink="", pct=0, ptxt="";
+let ord="", snap=null, pic="", picBlob=null, savePromise=null, busy=false, waLink="", pct=0, ptxt="";
 
 const S = d => `<svg viewBox="0 0 24 24">${d}</svg>`;
 const IC = {
@@ -358,8 +368,13 @@ function render(){
           + '<input id="dcontact" placeholder="Mobile number * (10 digits)" inputmode="numeric" maxlength="10" autocomplete="tel-national">'
           + '<div class="err" id="econtact">Mobile number exactly 10 digits ka hona chahiye</div></div>';
       }
-      h += `<button class="ok" data-a="next" ${mode && (mode=="pick" || (mode=="sit" && tbl) || (mode=="delivery" && deliveryOK())) ? "" : "disabled"}>Book Order</button>`;
+      h += `<button class="ok" data-a="next" ${mode && (mode=="pick" || (mode=="sit" && tbl) || (mode=="delivery" && deliveryOK())) ? "" : "disabled"}>Confirm Order</button>`;
     }
+  }else if(step=="preview"){
+    h = `<h2>Confirm Your Order <button class="x" data-a="close">✕</button></h2>
+      <div class="list"><img class="pv" src="${pic}" alt="Your bill"></div>
+      <div class="hint">Tap <b>Book Order</b>: WhatsApp will open with this bill attached. Just tap Send.</div>
+      <div class="stk"><button class="ok" data-a="book">Book Order</button><button class="ok sec" data-a="edit">Edit Order</button></div>`;
   }else{
     h = `<h2><span>${ord ? "Order " + ord : "Placing Order"}</span>${waLink ? `<button class="x" data-a="closeord">✕</button>` : ""}</h2>
       <div class="pg">
@@ -489,68 +504,104 @@ function openWa(url){
 
 async function jget(url){ const r = await fetch(url); return r.json(); }
 
-async function bookOrder(){
-  busy = true; ord = ""; pct = 0; ptxt = "Generating your order number…";
-  step = "done"; render();
+function buildMsg(link){
+  const s=snap;
+  let m = `*New Order — ${ord}*\n`;
+  m += `━━━━━━━━━━━━━━\n`;
+  m += `📌 *Order Type:* ${s.w}\n`;
+  if(s.dname){
+    m += `👤 *Name:* ${s.dname}\n📞 *Phone:* ${s.dcontact}\n📍 *Address:* ${s.daddr} (Pin: ${s.dpin})\n`;
+  }
+  m += `━━━━━━━━━━━━━━\n🍽️ *ITEMS:*\n`;
+  s.r.forEach((it,i) => { m += `${i+1}. ${it.n} (${it.q} × ₹${it.p} = ₹${it.q*it.p})\n`; });
+  m += `━━━━━━━━━━━━━━\n💰 *TOTAL: ₹${s.t}/-*\n🕒 ${new Date().toLocaleString("en-IN")}\n`;
+  if(link) m += `\n🧾 *Order Details:*\n${link}\n`;
+  m += `\n_Please confirm my order._`;
+  return m;
+}
+
+// STEP 1: Confirm Order -> order number + bill image banti hai, preview dikhta hai (abhi kuch save/send nahi hota)
+async function confirmOrder(){
+  if(busy) return;
+  busy = true; pct = 0; ptxt = ""; step = "done"; render();
   const r = rows(), t = totals(), w = where();
   snap = {r,t,w,dname,daddr,dpin,dcontact};
 
-  // 1) Order number reserve (Sheet me ME-001 se serial)
-  setProg(12,"Generating your order number…");
-  try{
-    const d = await jget(APPS_SCRIPT_URL + "?action=reserve");
-    ord = (d && d.ordNumber) ? d.ordNumber : "";
-  }catch(e){}
-  if(!ord) ord = "ME-" + String(Date.now()).slice(-4);
-  render();
+  if(!ord){   // edit karke dobara confirm kare to wahi order number rehta hai
+    setProg(15,"Generating your order number…");
+    try{
+      const d = await jget(APPS_SCRIPT_URL + "?action=reserve");
+      ord = (d && d.ordNumber) ? d.ordNumber : "";
+    }catch(e){}
+    if(!ord) ord = "ME-" + String(Date.now()).slice(-4);
+    render();
+  }
 
-  // 2) Bill image
-  setProg(35,"Preparing your bill…");
+  setProg(55,"Preparing your bill…");
   try{ await document.fonts.load("bold 30px MEINR","₹"); }catch(e){}
   let c;
   try{ c = draw(r,t,w,true); pic = c.toDataURL("image/png"); }
   catch(e){ c = draw(r,t,w,false); pic = c.toDataURL("image/png"); } // file:// me banner canvas ko block karta hai
+  picBlob = await new Promise(res => c.toBlob(res,"image/png"));
 
-  // 3) Google Drive + Sheet
-  setProg(55,"Processing your order…");
-  let driveUrl = "", viewUrl = "";
-  try{
-    const res = await fetch(APPS_SCRIPT_URL, {
-      method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body: JSON.stringify({
-        action:"save", ordNumber:ord, image:pic,
-        summary: w + (dname ? " | " + dname + " | " + dcontact + " | " + daddr + " (" + dpin + ")" : "") + " | Total ₹" + t
-      })
+  savePromise = null;
+  busy = false; step = "preview"; render();
+}
+
+// Drive + Sheet me save (Book Order dabate hi background me start hota hai)
+function saveOrder(){
+  if(savePromise) return savePromise;
+  const s = snap, p = pic, o = ord;
+  savePromise = (async () => {
+    try{
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"},
+        body: JSON.stringify({
+          action:"save", ordNumber:o, image:p,
+          summary: s.w + (s.dname ? " | " + s.dname + " | " + s.dcontact + " | " + s.daddr + " (" + s.dpin + ")" : "") + " | Total ₹" + s.t
+        })
+      });
+      const d = await res.json();
+      if(d && d.status==="success") return d.url;
+    }catch(e){}
+    savePromise = null;      // fail hua to dobara try ho sakta hai
+    return "";
+  })();
+  return savePromise;
+}
+
+// STEP 2: Book Order -> bill image WhatsApp me attach (customer sirf Send dabata hai)
+function placeOrder(){
+  if(busy || !picBlob) return;
+  const text = buildMsg("");
+  const file = new File([picBlob], ord + ".png", {type:"image/png"});
+  const up = saveOrder();   // click ke saath hi save shuru
+  let canShare = false;
+  try{ canShare = !!(navigator.share && navigator.canShare && navigator.canShare({files:[file]})); }catch(e){}
+  if(!canShare){ fallbackWa(up,text); return; }
+  busy = true;
+  navigator.share({files:[file], text})
+    .then(async () => {
+      step="done"; waLink=""; setProg(90,"Finishing…"); render();
+      await up; reset();
+    })
+    .catch(e => {
+      busy = false;
+      if(!(e && e.name==="AbortError")) fallbackWa(up,text);   // customer ne cancel kiya to preview par hi rahega
     });
-    const d = await res.json();
-    if(d && d.status==="success"){
-      ord = d.ordNumber; driveUrl = d.url;
-      viewUrl = APPS_SCRIPT_URL + "?action=view&o=" + encodeURIComponent(ord);
-    }
-  }catch(e){}
-  setProg(85,"Almost done…");
+}
 
-  // 4) WhatsApp message
-  const link = SHOW_LINK ? (USE_DRIVE_LINK ? driveUrl : viewUrl) : "";
-  let m = `*New Order — ${ord}*\n`;
-  m += `━━━━━━━━━━━━━━\n`;
-  m += `📌 *Order Type:* ${snap.w}\n`;
-  if(snap.dname){
-    m += `👤 *Name:* ${snap.dname}\n📞 *Phone:* ${snap.dcontact}\n📍 *Address:* ${snap.daddr} (Pin: ${snap.dpin})\n`;
-  }
-  m += `━━━━━━━━━━━━━━\n🍽️ *ITEMS:*\n`;
-  snap.r.forEach((it,i) => { m += `${i+1}. ${it.n} (${it.q} × ₹${it.p} = ₹${it.q*it.p})\n`; });
-  m += `━━━━━━━━━━━━━━\n💰 *TOTAL: ₹${snap.t}/-*\n🕒 ${new Date().toLocaleString("en-IN")}\n`;
-  if(link) m += `\n🧾 *Order Details:*\n${link}\n`;
-  m += `\n_Please confirm my order._`;
-
-  openWa(`https://wa.me/${NO}?text=` + encodeURIComponent(m));
+// Agar phone/browser image share support na kare (jaise desktop): sirf text WhatsApp me khulta hai
+async function fallbackWa(up,text){
+  busy = true; step = "done"; waLink = ""; pct = 40; ptxt = "Processing your order…"; render();
+  await up;
+  openWa(`https://wa.me/${NO}?text=` + encodeURIComponent(text));
 }
 
 function reset(){
   cart={}; totals(); renderMenu();
   mode=null; tbl=null; oth=""; dname=""; daddr=""; dpin=""; dcontact="";
-  busy=false; step="cart"; waLink=""; ord=""; pct=0; leftApp=false;
+  busy=false; step="cart"; waLink=""; ord=""; pct=0; leftApp=false; pic=""; picBlob=null; savePromise=null;
   $("sheet").classList.remove("open");
 }
 
@@ -561,8 +612,10 @@ function act(a,v){
   else if(a=="next"){
     if(busy) return;
     if(mode=="delivery" && !deliveryOK()) return;
-    bookOrder();
+    confirmOrder();
   }
+  else if(a=="book") placeOrder();
+  else if(a=="edit"){ step="cart"; render(); }
   else if(a=="closeord") reset();
 }
 
@@ -635,7 +688,7 @@ function showAdmin(){
       ${adminList.length ? adminList.map((o,i) => `
         <div class="ar2">
           <div><div class="on2">${esc(o.ord.replace(/^#/,""))}</div><div class="tm">${esc(o.time)}</div><div class="sm">${esc(o.summary)}</div></div>
-          <button class="th" data-i="${i}"><img loading="lazy" src="${thumb(o.id,400)}" onerror="imgErr(this,'${o.id}',400)" alt="${esc(o.ord)}"></button>
+          <button class="th" data-i="${i}"><img loading="lazy" src="${thumb(o.id,300)}" onerror="imgErr(this,'${o.id}',300)" alt="${esc(o.ord)}"></button>
         </div>`).join("") : `<div class="empty">No orders yet</div>`}
     </div>`;
   a.classList.add("open");
