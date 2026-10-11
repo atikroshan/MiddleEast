@@ -188,6 +188,8 @@ const NO = "919960171516";            // WhatsApp number
 const BANNER_FILE = "Banner_1.png";   // Banner folder ki image ka naam (extension galat ho to bhi auto try hota hai)
 const BANNER_DIR  = "Banner/";
 const HOLDER_DIR  = "HOLDER/";
+const SEND_MODE = "direct";           // "direct" = seedha +91 9960171516 ki chat khulti hai (order text ke saath), image Drive/admin me
+                                      // "share"  = phone ka share screen (image attach hoti hai, par contact khud dhoondhna padta hai)
 const SHOW_LINK = false;              // false = WhatsApp message me koi link nahi (Sheet ke column D se dekho)
 const USE_DRIVE_LINK = true;          // true = seedha Drive image link; false = Apps Script viewer link
 
@@ -373,7 +375,9 @@ function render(){
   }else if(step=="preview"){
     h = `<h2>Confirm Your Order <button class="x" data-a="close">✕</button></h2>
       <div class="list"><img class="pv" src="${pic}" alt="Your bill"></div>
-      <div class="hint">Tap <b>Book Order</b>: WhatsApp will open with this bill attached. Just tap Send.</div>
+      <div class="hint">${SEND_MODE==="share"
+        ? "Tap <b>Book Order</b>, choose <b>WhatsApp</b>, then select <b>Middle East (+91 99601 71516)</b> and tap Send."
+        : "Tap <b>Book Order</b>: WhatsApp will open Middle East chat with your order details. Just tap Send."}</div>
       <div class="stk"><button class="ok" data-a="book">Book Order</button><button class="ok sec" data-a="edit">Edit Order</button></div>`;
   }else{
     h = `<h2><span>${ord ? "Order " + ord : "Placing Order"}</span>${waLink ? `<button class="x" data-a="closeord">✕</button>` : ""}</h2>
@@ -578,7 +582,7 @@ function placeOrder(){
   const up = saveOrder();   // click ke saath hi save shuru
   let canShare = false;
   try{ canShare = !!(navigator.share && navigator.canShare && navigator.canShare({files:[file]})); }catch(e){}
-  if(!canShare){ fallbackWa(up,text); return; }
+  if(SEND_MODE!=="share" || !canShare){ fallbackWa(up,text); return; }
   busy = true;
   navigator.share({files:[file], text})
     .then(async () => {
